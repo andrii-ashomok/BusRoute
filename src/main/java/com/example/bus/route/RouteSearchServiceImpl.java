@@ -37,7 +37,7 @@ public class RouteSearchServiceImpl implements RouteSearchService {
     private int searchMaxPoolSize;
 
     private ThreadPoolExecutor executor;
-    private CopyOnWriteArrayList<BusRoute> busRouteCopyOnWriteArrayList;
+    private static CopyOnWriteArrayList<BusRoute> busRouteCopyOnWriteArrayList;
     private BlockingQueue queue;
 
     @Override
@@ -95,48 +95,35 @@ public class RouteSearchServiceImpl implements RouteSearchService {
             return Collections.EMPTY_LIST;
         }
 
-        queue = new ArrayBlockingQueue<Runnable>(size);
+        int queueSize = size;
+        if (size >= 20_000) {
 
-        executor = new ThreadPoolExecutor(parserCorePoolSize, parserMaxPoolSize,
-                size, TimeUnit.MILLISECONDS, queue);
+            queueSize = size/2;
+        }
 
-        List<BusRoute> busRouteList = new ArrayList<>(size);
+        initConcurrency(parserCorePoolSize, parserMaxPoolSize, size, queueSize);
 
         StopWatch watch = new StopWatch();
         watch.start();
+        busRouteCopyOnWriteArrayList = new CopyOnWriteArrayList<>();
 
         lines.stream()
                 .skip(1)
-                .forEach(line -> executor.submit(() -> {
-
-                    BusRoute busRoute = new BusRoute();
-                    String[] arrLines = line.split(SPACE_SYMBOL);
-
-                    busRoute.setId(Integer.valueOf(arrLines[0]));
-
-                    busRoute.setStationList(Arrays.stream(arrLines)
-                            .skip(1)
-                            .map(Integer::valueOf)
-                            .collect(Collectors.toList()));
-
-                    synchronized (busRouteList) {
-                        busRouteList.add(busRoute);
-                    }
-
-                }));
+                .forEach(line ->
+                        executor.submit(
+                                new ConverterLineToObject(line)));
 
         turnOffExecutor(size, "Lines parsing process interrupted");
 
         watch.stop();
 
-        if (!busRouteList.isEmpty()) {
-            busRouteCopyOnWriteArrayList = new CopyOnWriteArrayList<>(busRouteList);
-        }
-
         log.info("Lines (size: {}) parsing process duration {} sec", size, watch.getTotalTimeSeconds());
 
-        return busRouteList;
+        return busRouteCopyOnWriteArrayList;
     }
+
+
+
 
 
    /* public List<BusRoute> splitLineArrayToMap(List<String> lines, int size) {
@@ -180,11 +167,7 @@ public class RouteSearchServiceImpl implements RouteSearchService {
         if (size == 0)
             return false;
 
-        queue = new LinkedBlockingQueue<Runnable>(size);
-
-        executor = new ThreadPoolExecutor(searchCorePoolSize, searchMaxPoolSize,
-                size, TimeUnit.MILLISECONDS, queue);
-
+        initConcurrency(searchCorePoolSize, searchMaxPoolSize, size, size);
 
         List<Future<Boolean>> futures = busRouteCopyOnWriteArrayList.stream()
                 .map(o ->
@@ -240,6 +223,20 @@ public class RouteSearchServiceImpl implements RouteSearchService {
 
     }
 
+
+
+    private void initConcurrency(int corePoolSize, int maxPoolSize, int ttl, int queueSize) {
+
+
+        queue = new ArrayBlockingQueue(queueSize);
+
+        executor = new ThreadPoolExecutor(corePoolSize, maxPoolSize,
+                ttl, TimeUnit.MILLISECONDS, queue);
+
+
+        executor.setRejectedExecutionHandler(new BlockingQueueRejection());
+    }
+
     private void turnOffExecutor(int ttl, String message) {
 
         executor.shutdown();
@@ -258,6 +255,31 @@ public class RouteSearchServiceImpl implements RouteSearchService {
                 executor.shutdownNow();
         }
 
+    }
+
+
+    private static final class ConverterLineToObject implements Runnable {
+
+        private String line;
+
+        ConverterLineToObject(String line) {
+            this.line = line;
+        }
+
+        @Override
+        public void run() {
+            BusRoute busRoute = new BusRoute();
+            String[] arrLines = line.split(SPACE_SYMBOL);
+
+            busRoute.setId(Integer.valueOf(arrLines[0]));
+
+            busRoute.setStationList(Arrays.stream(arrLines)
+                    .skip(1)
+                    .map(Integer::valueOf)
+                    .collect(Collectors.toList()));
+
+            busRouteCopyOnWriteArrayList.add(busRoute);
+        }
     }
 
 }

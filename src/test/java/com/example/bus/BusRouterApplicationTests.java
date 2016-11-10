@@ -15,7 +15,7 @@ public class BusRouterApplicationTests {
 	@Test
 	public void testGenerateBusRouteData() {
 
-		BusRouteGenerator.generateFileWithBusRoute(null, 1_000, 500);
+		BusRouteGenerator.generateFileWithBusRoute(null, 51_000, 600);
 
 		assert Files.exists(Paths.get(BusRouteGenerator.FILE_NAME));
 	}
